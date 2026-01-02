@@ -1,63 +1,141 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, RefreshCw, ShoppingCart, CheckCircle, Edit3, X, Plus, Trash2, Settings, Sparkles, Loader, Flame, Trophy } from 'lucide-react';
-import { generateModuleWithAI } from './ai';
+import { Save, RefreshCw, ShoppingCart, CheckCircle, Edit3, X, Plus, Trash2, Settings, Sparkles, Loader, Flame, Trophy, MessageSquare, ArrowRight, Send } from 'lucide-react';
+import { chatWithAgent, generateWeeklyPlan } from './ai';
 
 // --- DEFAULT DATA (Fallback if storage is empty) ---
 
-const DEFAULT_MODULES = {
-  breakfast: [
-    { id: 'B1', name: 'Eggs & Carbs', desc: '3-6 Eggs + Bread/Yam', ingredients: ['Eggs', 'Bread', 'Butter'] },
-    { id: 'B2', name: 'Oats Power Bowl', desc: 'Oats + Milk + PB + Banana', ingredients: ['Oats', 'Milk', 'Peanut Butter', 'Banana'] },
-    { id: 'B3', name: 'Beans Combo', desc: 'Beans + Bread/Garri + Protein', ingredients: ['Beans', 'Bread', 'Fish'] },
-  ],
-  lunch: [
-    { id: 'L1', name: 'Rice Combo', desc: 'Rice + Meat/Fish + Stew', ingredients: ['Rice', 'Chicken', 'Tomatoes', 'Veg Oil'] },
-    { id: 'L2', name: 'Yam Combo', desc: 'Boiled Yam + Egg/Fish Sauce', ingredients: ['Yam', 'Eggs', 'Tomatoes', 'Veg Oil'] },
-    { id: 'L3', name: 'Swallow Combo', desc: 'Eba/Semo + Soup + Protein', ingredients: ['Garri', 'Egusi', 'Beef', 'Palm Oil', 'Ugu'] },
-  ],
-  dinner: [
-    { id: 'D1', name: 'Protein Plate', desc: 'Meat/Fish + Small Carb + Veg', ingredients: ['Fish', 'Potatoes', 'Cabbage'] },
-    { id: 'D2', name: 'Beans & Protein', desc: 'Beans + Fish/Egg + Veg', ingredients: ['Beans', 'Fish', 'Plantain'] },
-    { id: 'D3', name: 'Oats Reload', desc: 'Oats + Milk + PB', ingredients: ['Oats', 'Milk', 'Peanut Butter'] },
-  ],
-  snack: [
-    { id: 'S1', name: 'Nuts & Fruit', desc: 'Groundnuts + Banana', ingredients: ['Groundnuts', 'Banana'] },
-    { id: 'S2', name: 'Dairy Load', desc: 'Milk + Bread', ingredients: ['Milk', 'Bread'] },
-    { id: 'S3', name: 'Yogurt Bowl', desc: 'Yogurt + Granola', ingredients: ['Yogurt', 'Granola'] },
-  ]
-};
+const DEFAULT_MODULES = [
+  { id: 'B1', name: 'Eggs & Carbs', desc: '3-6 Eggs + Bread/Yam', ingredients: ['Eggs', 'Bread', 'Butter'] },
+  { id: 'B2', name: 'Oats Power Bowl', desc: 'Oats + Milk + PB + Banana', ingredients: ['Oats', 'Milk', 'Peanut Butter', 'Banana'] },
+  { id: 'B3', name: 'Beans Combo', desc: 'Beans + Bread/Garri + Protein', ingredients: ['Beans', 'Bread', 'Fish'] },
+  { id: 'L1', name: 'Rice Combo', desc: 'Rice + Meat/Fish + Stew', ingredients: ['Rice', 'Chicken', 'Tomatoes', 'Veg Oil'] },
+  { id: 'L2', name: 'Yam Combo', desc: 'Boiled Yam + Egg/Fish Sauce', ingredients: ['Yam', 'Eggs', 'Tomatoes', 'Veg Oil'] },
+  { id: 'L3', name: 'Swallow Combo', desc: 'Eba/Semo + Soup + Protein', ingredients: ['Garri', 'Egusi', 'Beef', 'Palm Oil', 'Ugu'] },
+  { id: 'D1', name: 'Protein Plate', desc: 'Meat/Fish + Small Carb + Veg', ingredients: ['Fish', 'Potatoes', 'Cabbage'] },
+  { id: 'D2', name: 'Beans & Protein', desc: 'Beans + Fish/Egg + Veg', ingredients: ['Beans', 'Fish', 'Plantain'] },
+  { id: 'D3', name: 'Oats Reload', desc: 'Oats + Milk + PB', ingredients: ['Oats', 'Milk', 'Peanut Butter'] },
+  { id: 'S1', name: 'Nuts & Fruit', desc: 'Groundnuts + Banana', ingredients: ['Groundnuts', 'Banana'] },
+  { id: 'S2', name: 'Dairy Load', desc: 'Milk + Bread', ingredients: ['Milk', 'Bread'] },
+  { id: 'S3', name: 'Yogurt Bowl', desc: 'Yogurt + Granola', ingredients: ['Yogurt', 'Granola'] },
+];
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export default function BulkStack() {
   // --- STATE ---
 
-  // 1. The Custom Modules (The Menu)
+  // 1. Universal Modules (Array) - MIGRATION LOGIC
   const [modules, setModules] = useState(() => {
-    const saved = localStorage.getItem('bulkstack-modules');
-    return saved ? JSON.parse(saved) : DEFAULT_MODULES;
+    const saved = localStorage.getItem('bulkstack-modules-v2');
+    if (saved) return JSON.parse(saved);
+
+    // Migration: Check old V1 key
+    const old = localStorage.getItem('bulkstack-modules');
+    if (old) {
+      const parsed = JSON.parse(old);
+      // Flatten
+      const flat = [];
+      if (!Array.isArray(parsed)) {
+        Object.values(parsed).forEach(list => flat.push(...list));
+        return flat;
+      }
+      return parsed;
+    }
+    return DEFAULT_MODULES;
   });
 
-  // 2. The Weekly Plan (The Schedule)
+  // 2. The Weekly Plan
   const [plan, setPlan] = useState({});
 
-  // 3. UI State
+  // 3. Pantry & Context
+  const [pantry, setPantry] = useState(() => {
+    const saved = localStorage.getItem('bulkstack-pantry');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [aiContext, setAiContext] = useState(() => {
+    const saved = localStorage.getItem('bulkstack-context');
+    return saved ? JSON.parse(saved) : { missedMeals: [], preferences: "" };
+  });
+
+  // 4. UI State
   const [view, setView] = useState('planner');
   const [selectedSlot, setSelectedSlot] = useState(null); // { day, type }
   const [editingModule, setEditingModule] = useState(null); // { type, data } for the form modal
 
-  // 4. AI State
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [showAiModal, setShowAiModal] = useState(null); // 'breakfast', 'lunch', etc.
+  // 5. Chat State
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatHistory, setChatHistory] = useState([{ role: 'model', text: 'Hi! I am your BulkStack Agent. Tell me what you ate or what you need.' }]);
+  const [chatInput, setChatInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [pendingProposal, setPendingProposal] = useState(null);
 
-  // 5. Planner Logic
+  const messagesEndRef = useRef(null);
   const plannerScrollRef = useRef(null);
+
+  // --- CHAT LOGIC ---
+
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const userMsg = chatInput;
+    setChatInput("");
+    setChatHistory(prev => [...prev, { role: 'user', text: userMsg }]);
+    setIsTyping(true);
+
+    const appState = { pantry, modules, plan, context: aiContext };
+    const result = await chatWithAgent(userMsg, chatHistory, appState);
+
+    setIsTyping(false);
+    setChatHistory(prev => [...prev, { role: 'model', text: result.reply }]);
+
+    if (result.proposal) {
+      setPendingProposal(result.proposal);
+    }
+  };
+
+  const handleConfirmProposal = () => {
+    const { type, data } = pendingProposal;
+
+    if (type === 'LOG_MEAL') {
+      const { day, mealType } = data;
+      setPlan(prev => ({
+        ...prev,
+        [day]: { ...prev[day], completed: { ...prev[day].completed, [mealType]: true } }
+      }));
+    } else if (type === 'CREATE_MODULE') {
+      const newMod = { ...data, id: `AI-${Date.now().toString().slice(-3)}` };
+      setModules(prev => [...prev, newMod]);
+    } else if (type === 'UPDATE_PANTRY') {
+      setPantry(prev => [...prev, ...data.items]);
+    } else if (type === 'PLAN_WEEK') {
+      handleAutoPlan();
+    }
+    setPendingProposal(null);
+    setChatHistory(prev => [...prev, { role: 'model', text: "Done! ✅" }]);
+  };
+
+  const handleAutoPlan = async () => {
+    if (!window.confirm("Auto-plan week?")) return;
+    try {
+      const newPlan = await generateWeeklyPlan(pantry, modules, aiContext);
+      const sanitized = {};
+      DAYS.forEach(d => {
+        sanitized[d] = {
+          ...newPlan[d],
+          completed: { breakfast: false, lunch: false, dinner: false, snack: false }
+        };
+      });
+      setPlan(sanitized);
+    } catch (e) {
+      alert("Planning failed");
+    }
+  };
 
   // Determine current day index (0=Monday, 6=Sunday)
   const getCurrentDayIndex = () => {
     const day = new Date().getDay(); // 0=Sun, 1=Mon...
-    // Convert to 0=Mon, ..., 6=Sun
     return day === 0 ? 6 : day - 1;
   };
 
@@ -91,8 +169,16 @@ export default function BulkStack() {
   // --- STORAGE EFFECTS ---
 
   useEffect(() => {
-    localStorage.setItem('bulkstack-modules', JSON.stringify(modules));
+    localStorage.setItem('bulkstack-modules-v2', JSON.stringify(modules));
   }, [modules]);
+
+  useEffect(() => {
+    localStorage.setItem('bulkstack-pantry', JSON.stringify(pantry));
+  }, [pantry]);
+
+  useEffect(() => {
+    localStorage.setItem('bulkstack-context', JSON.stringify(aiContext));
+  }, [aiContext]);
 
   useEffect(() => {
     const savedPlan = localStorage.getItem('bulkstack-plan');
@@ -101,7 +187,7 @@ export default function BulkStack() {
     } else {
       initializeDefaultPlan();
     }
-  }, []); // Only runs on mount
+  }, []);
 
   useEffect(() => {
     if (Object.keys(plan).length > 0) {
@@ -109,14 +195,15 @@ export default function BulkStack() {
     }
   }, [plan]);
 
-  // Auto-scroll to today when planner view is active
+  // Scroll Chat to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory, pendingProposal]);
+
+  // Auto-scroll to today
   useEffect(() => {
     if (view === 'planner' && plannerScrollRef.current) {
       const todayIndex = getCurrentDayIndex();
-      // Simple logic: scroll width * index. Better to use scrollIntoView if we had refs for each card, 
-      // but simple math works for full-width cards or snapping.
-      // Let's rely on native scrollIntoView behavior if we can, but simpler:
-      // Just wait a tick for render
       setTimeout(() => {
         const card = plannerScrollRef.current?.children[todayIndex];
         if (card) {
@@ -129,14 +216,14 @@ export default function BulkStack() {
   // --- ACTIONS ---
 
   const initializeDefaultPlan = () => {
-    // If modules changed, we want the plan to use the current available modules
     const defaultPlan = {};
+    // Use random or fixed indices from the flat list
     DAYS.forEach(day => {
       defaultPlan[day] = {
-        breakfast: modules.breakfast[0],
-        lunch: modules.lunch[0],
-        dinner: modules.dinner[0],
-        snack: modules.snack[0],
+        breakfast: modules[0] || {},
+        lunch: modules[3] || {},
+        dinner: modules[6] || {},
+        snack: modules[9] || {},
         completed: { breakfast: false, lunch: false, dinner: false, snack: false }
       };
     });
@@ -175,43 +262,33 @@ export default function BulkStack() {
   const saveModule = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
-    const category = editingModule.type; // breakfast, lunch, etc.
+    const category = editingModule.type || 'custom'; // fallback
 
     // Parse ingredients from string to array
     const ingString = formData.get('ingredients');
     const ingArray = ingString.split(',').map(i => i.trim()).filter(i => i);
 
     const newModuleData = {
-      id: formData.get('id') || `${category.charAt(0).toUpperCase()}${Date.now().toString().slice(-3)}`, // Generate ID if new
+      id: formData.get('id') || `M-${Date.now().toString().slice(-3)}`,
       name: formData.get('name'),
       desc: formData.get('desc'),
       ingredients: ingArray
     };
 
     setModules(prev => {
-      const catList = prev[category];
-      // Check if updating existing or adding new
-      const exists = catList.find(m => m.id === newModuleData.id);
-
-      let newList;
+      const exists = prev.find(m => m.id === newModuleData.id);
       if (exists) {
-        newList = catList.map(m => m.id === newModuleData.id ? newModuleData : m);
-      } else {
-        newList = [...catList, newModuleData];
+        return prev.map(m => m.id === newModuleData.id ? newModuleData : m);
       }
-
-      return { ...prev, [category]: newList };
+      return [...prev, newModuleData];
     });
 
     setEditingModule(null);
   };
 
-  const deleteModule = (category, moduleId) => {
+  const deleteModule = (moduleId) => {
     if (!window.confirm("Delete this meal? This won't remove it from days already planned.")) return;
-    setModules(prev => ({
-      ...prev,
-      [category]: prev[category].filter(m => m.id !== moduleId)
-    }));
+    setModules(prev => prev.filter(m => m.id !== moduleId));
   };
 
   // --- SHOPPING LOGIC ---
@@ -271,13 +348,14 @@ export default function BulkStack() {
             <button onClick={() => setSelectedSlot(null)}><X className="text-gray-400" /></button>
           </div>
           <div className="space-y-3">
-            {modules[type].map(mod => (
+            {modules.map(mod => (
               <button
                 key={mod.id}
                 onClick={() => handleModuleSelect(mod)}
                 className="w-full text-left p-4 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700 hover:border-green-500 transition-all group"
               >
                 <div className="flex justify-between">
+                  {/* ... same ... */}
                   <span className="font-bold text-green-400 group-hover:text-green-300">{mod.id}</span>
                   <span className="text-white font-semibold">{mod.name}</span>
                 </div>
@@ -502,26 +580,68 @@ export default function BulkStack() {
   };
 
   const ShoppingView = () => {
-    const items = generateShoppingList();
+    // Convert list to array of objects {name, count}
+    const rawList = generateShoppingList();
+    const items = rawList.map(([name, count]) => ({ name, count }));
+
+    // Simple pantry matching (case-insensitive check)
+    // Assuming pantry is array of strings or objects. We'll handle both.
+    const normalizedPantry = pantry.map(p => (typeof p === 'string' ? p : p.name).toLowerCase());
+
+    const neededItems = items.filter(i => !normalizedPantry.includes(i.name.toLowerCase()));
+    const haveItems = items.filter(i => normalizedPantry.includes(i.name.toLowerCase()));
+
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-20">
         <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-          <ShoppingCart className="text-green-500" /> Shopping List
+          <ShoppingCart className="text-green-500" /> Smart Shop
         </h2>
+
         {items.length === 0 ? (
           <p className="text-gray-500 italic">Plan your week first to see items here.</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {items.map(([item, count]) => (
-              <div key={item} className="flex justify-between items-center p-3 bg-gray-800 rounded-lg border border-gray-700">
-                <span className="text-white font-medium capitalize">{item}</span>
-                <span className="bg-green-900 text-green-300 text-xs px-2 py-1 rounded-full font-mono">
-                  {count > 1 ? `${count}x` : '1x'}
-                </span>
+          <div className="space-y-6">
+
+            {/* NEEDED SECTION */}
+            <div>
+              <h3 className="text-sm font-bold text-green-400 uppercase tracking-wider mb-3">To Buy ({neededItems.length})</h3>
+              {neededItems.length === 0 ? (
+                <div className="text-gray-500 text-sm">Nothing to buy! You have everything.</div>
+              ) : (
+                <div className="grid gap-2">
+                  {neededItems.map((item) => (
+                    <div key={item.name} className="flex items-center gap-3 p-3 bg-gray-800 rounded-lg border border-gray-700">
+                      <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                      <span className="text-white font-medium">
+                        {item.count} {item.name}{item.count > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* IN PANTRY SECTION */}
+            {haveItems.length > 0 && (
+              <div className="opacity-60">
+                <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <CheckCircle size={14} /> Already in Pantry
+                </h3>
+                <div className="grid gap-2">
+                  {haveItems.map((item) => (
+                    <div key={item.name} className="flex items-center gap-3 p-3 bg-black/20 rounded-lg border border-gray-800/50">
+                      <div className="w-2 h-2 rounded-full bg-gray-600"></div>
+                      <span className="text-gray-400 font-medium decoration-gray-600">
+                        {item.count} {item.name}{item.count > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
+            )}
           </div>
         )}
+
         <button onClick={() => setView('planner')} className="mt-8 w-full py-3 bg-gray-700 text-white rounded-lg font-bold">
           Back to Planner
         </button>
@@ -530,60 +650,45 @@ export default function BulkStack() {
   };
 
   const ManagerView = () => (
-    <div className="space-y-8 pb-20">
+    <div className="space-y-4 pb-20">
       <div className="bg-gray-800 p-4 rounded-xl border border-gray-700">
         <h2 className="text-xl font-bold text-white mb-2">Module Manager</h2>
-        <p className="text-sm text-gray-400">Create or edit your meal templates here. Any changes will appear in the swap menu.</p>
+        <p className="text-sm text-gray-400">Manage your universal meal templates. Use Chat to create new ones easily.</p>
+        <button
+          onClick={() => setEditingModule({ type: 'new', data: {} })}
+          className="mt-3 text-xs bg-white text-black px-3 py-2 rounded-full font-bold flex items-center gap-1 hover:bg-gray-200"
+        >
+          <Plus size={12} /> Add Manual
+        </button>
       </div>
 
-      {['breakfast', 'lunch', 'dinner', 'snack'].map(category => (
-        <div key={category}>
-          <div className="flex justify-between items-end mb-4 px-1">
-            <h3 className="text-green-400 font-bold uppercase tracking-wider text-sm">{category} Modules</h3>
-            {/* AI BUTTON */}
-            <button
-              onClick={() => setShowAiModal(category)}
-              className="text-xs bg-purple-600 text-white px-3 py-1 rounded-full font-bold flex items-center gap-1 hover:bg-purple-500 border border-purple-400"
-            >
-              <Sparkles size={12} /> AI Gen
-            </button>
-            <button
-              onClick={() => setEditingModule({ type: category, data: {} })}
-              className="text-xs bg-white text-black px-3 py-1 rounded-full font-bold flex items-center gap-1 hover:bg-gray-200"
-            >
-              <Plus size={12} /> Add Manual
-            </button>
-          </div>
-
-          <div className="grid gap-3">
-            {modules[category].map(mod => (
-              <div key={mod.id} className="bg-gray-900 border border-gray-800 p-4 rounded-lg flex justify-between items-center">
-                <div>
-                  <div className="font-bold text-white flex gap-2 items-center">
-                    <span className="text-gray-500 text-xs bg-gray-800 px-1 rounded border border-gray-700">{mod.id}</span>
-                    {mod.name}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1 max-w-[200px] truncate">{mod.ingredients.join(', ')}</div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setEditingModule({ type: category, data: mod })}
-                    className="p-2 bg-gray-800 text-gray-300 rounded hover:text-white border border-gray-700"
-                  >
-                    <Edit3 size={16} />
-                  </button>
-                  <button
-                    onClick={() => deleteModule(category, mod.id)}
-                    className="p-2 bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 border border-transparent hover:border-red-900"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+      <div className="grid gap-3">
+        {modules.map(mod => (
+          <div key={mod.id} className="bg-gray-900 border border-gray-800 p-4 rounded-lg flex justify-between items-center">
+            <div>
+              <div className="font-bold text-white flex gap-2 items-center">
+                <span className="text-gray-500 text-xs bg-gray-800 px-1 rounded border border-gray-700">{mod.id}</span>
+                {mod.name}
               </div>
-            ))}
+              <div className="text-xs text-gray-500 mt-1 max-w-[200px] truncate">{mod.ingredients.join(', ')}</div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setEditingModule({ type: 'edit', data: mod })}
+                className="p-2 bg-gray-800 text-gray-300 rounded hover:text-white border border-gray-700"
+              >
+                <Edit3 size={16} />
+              </button>
+              <button
+                onClick={() => deleteModule(mod.id)}
+                className="p-2 bg-red-900/30 text-red-400 rounded hover:bg-red-900/50 border border-transparent hover:border-red-900"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 
@@ -593,7 +698,7 @@ export default function BulkStack() {
         <div className="flex justify-between items-center mb-8 pt-4">
           <div>
             <h1 className="text-3xl font-black text-white italic tracking-tighter">BULK<span className="text-green-500">STACK</span></h1>
-            <p className="text-xs text-gray-500 font-mono">v2.1 // GAMIFIED</p>
+            <p className="text-xs text-gray-500 font-mono">v3.0 // UNIVERSAL AI</p>
           </div>
           <button onClick={() => {
             if (window.confirm("Reset entire plan?")) initializeDefaultPlan();
@@ -624,7 +729,74 @@ export default function BulkStack() {
 
         {renderModuleSelector()}
         {renderEditorModal()}
-        {renderAIModal()}
+
+
+        {/* CHAT FAB & OVERLAY */}
+        {/* Floating Action Button */}
+        {!isChatOpen && (
+          <button
+            onClick={() => setIsChatOpen(true)}
+            className="fixed bottom-24 right-6 bg-purple-600 p-4 rounded-full text-white shadow-2xl shadow-purple-600/50 hover:scale-110 transition-transform z-50"
+          >
+            <MessageSquare size={28} />
+          </button>
+        )}
+
+        {/* Chat Sheet */}
+        <div className={`fixed inset-x-0 bottom-0 bg-gray-900 border-t border-gray-800 transition-all duration-500 ease-spring z-50 flex flex-col ${isChatOpen ? 'h-[85vh] rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)]' : 'h-0 pointer-events-none'}`}>
+          {isChatOpen && (
+            <>
+              {/* Handle Bar */}
+              <div className="w-full flex justify-center pt-3 pb-1 cursor-pointer hover:bg-gray-800 rounded-t-3xl" onClick={() => setIsChatOpen(false)}>
+                <div className="w-12 h-1.5 bg-gray-700 rounded-full"></div>
+              </div>
+
+              {/* Chat Area */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {chatHistory.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${msg.role === 'user' ? 'bg-purple-600 text-white rounded-br-none' : 'bg-gray-800 text-gray-200 rounded-bl-none'}`}>
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
+                {pendingProposal && (
+                  <div className="bg-gray-800 border border-purple-500/50 rounded-xl p-4 animate-in fade-in slide-in-from-bottom-4">
+                    <div className="text-purple-400 text-xs font-bold uppercase mb-2 flex items-center gap-2">
+                      <Sparkles size={12} /> Proposed Action
+                    </div>
+                    <div className="text-white font-bold mb-1">{pendingProposal.type.replace('_', ' ')}</div>
+                    <div className="text-xs text-gray-400 mb-4 break-words font-mono bg-black/30 p-2 rounded">
+                      {JSON.stringify(pendingProposal.data).slice(0, 50) + "..."}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={handleConfirmProposal} className="flex-1 bg-purple-600 text-white py-3 rounded-lg font-bold text-sm hover:bg-purple-500">Confirm</button>
+                      <button onClick={() => setPendingProposal(null)} className="flex-1 bg-gray-700 text-gray-300 py-3 rounded-lg font-bold text-sm hover:bg-gray-600">Reject</button>
+                    </div>
+                  </div>
+                )}
+                {isTyping && <div className="text-gray-500 text-xs pl-2">AI is thinking...</div>}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Input Area */}
+              <div className="p-4 bg-gray-900 border-t border-gray-800 pb-8">
+                <form onSubmit={handleSendMessage} className="relative">
+                  <input
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    placeholder="Type 'I had eggs' or 'Plan my week'..."
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl py-3 pl-4 pr-12 text-white focus:border-purple-500 outline-none placeholder:text-gray-600"
+                    autoFocus
+                  />
+                  <button type="submit" disabled={!chatInput.trim() || isTyping} className="absolute right-2 top-2 p-1.5 bg-purple-600 rounded-lg text-white disabled:opacity-50 hover:bg-purple-500">
+                    <ArrowRight size={18} />
+                  </button>
+                </form>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
